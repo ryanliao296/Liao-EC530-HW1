@@ -3,6 +3,7 @@ import csv
 import pandas as pd
 import logging
 from scipy.spatial import KDTree
+import re
 
 # Set up logging for skipped rows
 logging.basicConfig(
@@ -70,29 +71,23 @@ def load_coordinates_from_csv(file_path, lat_col, lon_col):
             reader = csv.DictReader(file)
             for row_num, row in enumerate(reader, start=1):
                 try:
+                    # Parse latitude and longitude using the universal parser
                     lat = parse_coordinate(row[lat_col])
                     lon = parse_coordinate(row[lon_col])
-                    
+                   
                     # Validate latitude and longitude ranges
-                    if lat is None or lon is None:
-                        print(f"Invalid coordinate in row {row_num}. Skipping.")
-                        continue
                     if not (-90 <= lat <= 90):
-                        print(f"Invalid latitude {lat} in row {row_num}. Skipping this row.")
-                        continue
+                        raise ValueError(f"Latitude out of range: {lat}")
                     if not (-180 <= lon <= 180):
-                        print(f"Invalid longitude {lon} in row {row_num}. Skipping this row.")
-                        continue
-                    
+                        raise ValueError(f"Longitude out of range: {lon}")
+                   
                     array.append((lat, lon))
-                except ValueError:
-                    print(f"Invalid data in row {row_num}: {row}. Skipping.")
+                except ValueError as e:
+                    print(f"Invalid coordinate in row {row_num}. Skipping. Error: {e}")
     except FileNotFoundError:
         print(f"File {file_path} not found.")
     except KeyError:
         print(f"Specified columns '{lat_col}' or '{lon_col}' not found in the file.")
-    except UnicodeDecodeError as e:
-        print(f"Error decoding file {file_path}: {e}")
     return array
 
 """
@@ -105,34 +100,43 @@ def dms_to_decimal(degrees, minutes, seconds, direction):
     return decimal
 
 """
-Parse DMS or decimal degrees input
+Parse a coordinate string in multiple formats:
+    - Decimal degrees: '40.7128', '-74.0060'
+    - Degrees, minutes, seconds: '40°42'51"N', '74°0'22"W'
+    - Decimal degrees with direction: '40.7128° N', '74.0060° W'
 """
-def parse_coordinate(input_str):
+def parse_coordinate(coord_str):
     try:
-        # Split the input string by spaces
-        parts = input_str.split()
-        if len(parts) == 2:
-            # Format: "40 42.8" (degrees and minutes only, without seconds or direction)
-            degrees, minutes = map(float, parts)
-            return degrees + (minutes / 60)
-        elif len(parts) == 3:
-            # Format: "40 42.8 0" or "40 42.8 N"
-            degrees, minutes, last_part = parts
-            if last_part.isdigit():  # If last part is a numeric second
-                seconds = float(last_part)
-                return float(degrees) + (float(minutes) / 60) + (seconds / 3600)
-            else:  # If last part is a direction like 'N' or 'W'
-                return dms_to_decimal(float(degrees), float(minutes), 0, last_part.upper())
-        elif len(parts) == 4:
-            # Format: "40 42.8 0 N"
-            degrees, minutes, seconds, direction = parts
-            return dms_to_decimal(float(degrees), float(minutes), float(seconds), direction.upper())
-        else:
-            # Assume decimal degrees format
-            return float(input_str)
+        # Remove spaces for easier parsing
+        coord_str = coord_str.strip()
+       
+        # Check for degrees, minutes, seconds (DMS) format
+        dms_match = re.match(r"(\d+)°\s*(\d+)'?\s*(\d+(?:\.\d+)?)?\"?\s*([NSEW])?", coord_str, re.IGNORECASE)
+        if dms_match:
+            degrees = int(dms_match.group(1))
+            minutes = int(dms_match.group(2))
+            seconds = float(dms_match.group(3)) if dms_match.group(3) else 0
+            direction = dms_match.group(4).upper() if dms_match.group(4) else None
+           
+            # Convert to decimal degrees
+            decimal = degrees + (minutes / 60) + (seconds / 3600)
+            if direction in ['S', 'W']:
+                decimal = -decimal
+            return decimal
+
+        # Check for decimal degrees with direction
+        dd_match = re.match(r"([+-]?\d+(?:\.\d+)?)°?\s*([NSEW])?", coord_str, re.IGNORECASE)
+        if dd_match:
+            decimal = float(dd_match.group(1))
+            direction = dd_match.group(2).upper() if dd_match.group(2) else None
+            if direction in ['S', 'W']:
+                decimal = -decimal
+            return decimal
+
+        # Fallback to basic decimal degrees
+        return float(coord_str)
     except ValueError as e:
-        print(f"Error parsing coordinate: {e}")
-        return None
+        raise ValueError(f"Error parsing coordinate '{coord_str}': {e}")
 
 """
     Prompt the user to input an array of GPS points (latitude and longitude).
@@ -145,30 +149,24 @@ def user_input_array():
     array = []
     while True:
         try:
-            lat_input = input("Enter latitude (or type 'd' to finish): ")
+            lat_input = input("Enter latitude (e.g., '40.7128', '40°42'51\"N', or '40.7128° N'; type 'd' to finish): ")
             if lat_input.lower() == 'd':
                 break
+            lon_input = input("Enter longitude (e.g., '-74.0060', '74°0'22\"W', or '74.0060° W'): ")
+           
             lat = parse_coordinate(lat_input)
-            if lat is None:
-                print("Invalid latitude format. Please try again.")
-                continue
-            
-            lon_input = input("Enter longitude: ")
             lon = parse_coordinate(lon_input)
-            if lon is None:
-                print("Invalid longitude format. Please try again.")
-                continue
-            
+           
             if not (-90 <= lat <= 90):
                 print("Error: Latitude must be between -90 and 90. Please try again.")
                 continue
             if not (-180 <= lon <= 180):
                 print("Error: Longitude must be between -180 and 180. Please try again.")
                 continue
-            
+           
             array.append((lat, lon))
-        except ValueError:
-            print("Invalid input. Please enter numeric values for latitude and longitude.")
+        except ValueError as e:
+            print(f"Invalid input: {e}")
     return array
 
 """
