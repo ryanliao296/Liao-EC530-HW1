@@ -62,20 +62,21 @@ def match_closest_points(array1, array2):
 
 """
 Load coordinates from csv file
-
 """
 def load_coordinates_from_csv(file_path, lat_col, lon_col):
     array = []
     try:
-        # Open the file with UTF-8 encoding
         with open(file_path, mode='r', encoding='utf-8') as file:
             reader = csv.DictReader(file)
             for row_num, row in enumerate(reader, start=1):
                 try:
-                    lat = float(row[lat_col])
-                    lon = float(row[lon_col])
+                    lat = parse_coordinate(row[lat_col])
+                    lon = parse_coordinate(row[lon_col])
                     
                     # Validate latitude and longitude ranges
+                    if lat is None or lon is None:
+                        print(f"Invalid coordinate in row {row_num}. Skipping.")
+                        continue
                     if not (-90 <= lat <= 90):
                         print(f"Invalid latitude {lat} in row {row_num}. Skipping this row.")
                         continue
@@ -85,7 +86,7 @@ def load_coordinates_from_csv(file_path, lat_col, lon_col):
                     
                     array.append((lat, lon))
                 except ValueError:
-                    print(f"Invalid data in row {row_num}. Skipping.")
+                    print(f"Invalid data in row {row_num}: {row}. Skipping.")
     except FileNotFoundError:
         print(f"File {file_path} not found.")
     except KeyError:
@@ -94,7 +95,44 @@ def load_coordinates_from_csv(file_path, lat_col, lon_col):
         print(f"Error decoding file {file_path}: {e}")
     return array
 
+"""
+Convert DMS to decimal degrees
+"""
+def dms_to_decimal(degrees, minutes, seconds, direction):
+    decimal = degrees + minutes / 60 + seconds / 3600
+    if direction in ['S', 'W']:
+        decimal = -decimal
+    return decimal
 
+"""
+Parse DMS or decimal degrees input
+"""
+def parse_coordinate(input_str):
+    try:
+        # Split the input string by spaces
+        parts = input_str.split()
+        if len(parts) == 2:
+            # Format: "40 42.8" (degrees and minutes only, without seconds or direction)
+            degrees, minutes = map(float, parts)
+            return degrees + (minutes / 60)
+        elif len(parts) == 3:
+            # Format: "40 42.8 0" or "40 42.8 N"
+            degrees, minutes, last_part = parts
+            if last_part.isdigit():  # If last part is a numeric second
+                seconds = float(last_part)
+                return float(degrees) + (float(minutes) / 60) + (seconds / 3600)
+            else:  # If last part is a direction like 'N' or 'W'
+                return dms_to_decimal(float(degrees), float(minutes), 0, last_part.upper())
+        elif len(parts) == 4:
+            # Format: "40 42.8 0 N"
+            degrees, minutes, seconds, direction = parts
+            return dms_to_decimal(float(degrees), float(minutes), float(seconds), direction.upper())
+        else:
+            # Assume decimal degrees format
+            return float(input_str)
+    except ValueError as e:
+        print(f"Error parsing coordinate: {e}")
+        return None
 
 """
     Prompt the user to input an array of GPS points (latitude and longitude).
@@ -104,18 +142,23 @@ def load_coordinates_from_csv(file_path, lat_col, lon_col):
         A list of tuples containing the entered (latitude, longitude) values.
 """
 def user_input_array():
-    
     array = []
     while True:
         try:
-            # Receive user input
             lat_input = input("Enter latitude (or type 'd' to finish): ")
             if lat_input.lower() == 'd':
                 break
-            lat = float(lat_input)
-            lon = float(input("Enter longitude: "))
+            lat = parse_coordinate(lat_input)
+            if lat is None:
+                print("Invalid latitude format. Please try again.")
+                continue
             
-            # Check latitude and longitude ranges
+            lon_input = input("Enter longitude: ")
+            lon = parse_coordinate(lon_input)
+            if lon is None:
+                print("Invalid longitude format. Please try again.")
+                continue
+            
             if not (-90 <= lat <= 90):
                 print("Error: Latitude must be between -90 and 90. Please try again.")
                 continue
@@ -124,11 +167,8 @@ def user_input_array():
                 continue
             
             array.append((lat, lon))
-
-        # Check for numerical coordinates
         except ValueError:
             print("Invalid input. Please enter numeric values for latitude and longitude.")
-
     return array
 
 """
